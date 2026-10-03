@@ -53,6 +53,42 @@ One more thing to know:
 - **The portal owns entitlements and billing state.** It reads Stripe webhooks and needs no copy of the catalogue, because **Stripe Price `lookup_key` + `metadata` are the contract** between the two.
 - **The website consumes a whitelisted JSON snapshot committed to git.** It is a static export, so there is no runtime dependency on the CRM, and git gives an audit trail of public prices.
 
+### Design principle: Twenty's primitives, layered with Integra's brand theme
+
+Custom UI on `crm.integrascientific.com` is **built with Twenty's design primitives** (components, tokens and layout patterns), so it looks and behaves like native Twenty functionality. It **inherits Integra's brand through the existing theme**. Staff already work in Twenty, so a custom widget should feel like part of the product and carry the same Integra colours and fonts as the rest of the CRM.
+
+**The rule is not "match Twenty's stock design".** The Integra re-skin stays (founder decision, option (a)):
+- `crm/image/integra-theme.css` maps the Integra palette, including brand gold, onto Twenty's `--t-*` tokens.
+- The image adds Manrope fonts and Integra icons.
+
+Because custom components use Twenty's tokens, they pick up Integra's colours and fonts automatically.
+
+Scope is **CRM only**. The public website (`integra-web`) and the portal (`portal.integrascientific.com`) keep their own Integra brand implementation (Tailwind/shadcn), unchanged.
+
+- **Front components** (`LeadScoreCard`, `TicketThread`, `StreamKpiWidget`, `QuoteBuilder`, etc.):
+  - Build them from **Twenty's component library, `twenty-ui`**: `Button`, `Tag`, `Status`, chips, avatars, icons and typography from `twenty-ui/primitives/*`.
+  - Take spacing, colour, radius and font tokens from `useTheme()` (`twenty-ui/theme-constants`) or Twenty's `--t-*` CSS variables. The theme then carries the Integra brand into them.
+  - The existing helpers in `src/lib/theme.ts` (which resolve through `--t-*` variables, with brand-gold and Manrope fallbacks) may be used alongside `useTheme()`.
+  - **Never import shadcn/ui or Tailwind**, and don't copy components or styles from `integra-web` or the portal.
+  - Note: `twenty-client-sdk` is the *data* client (`CoreApiClient`, `RestApiClient`); the UI components live in `twenty-ui`.
+- **Page layouts and record pages** follow Twenty's native record-page conventions and use Twenty's native building blocks before any custom component:
+  - FIELDS, VIEW, FILES and TIMELINE widgets;
+  - standard tabs;
+  - Twenty's grid on standalone pages.
+
+  Custom front components fill only the gaps the native widgets can't (score cards, threads, previews), and they sit in the layout like native widgets.
+- **Views** (tables, kanbans) are ordinary Twenty views: native field types, select-pill colours from Twenty's palette (as themed), standard aggregates and grouping.
+- **What stays as-is:**
+  - `crm/image/integra-theme.css` and the rest of the branding layer.
+  - `src/lib/theme.ts`.
+  - The existing `RenewalBanner` and `RenewalCountWidget`, which already resolve everything through the theme.
+  - `verify-model.mjs` rule 7, which bans raw hex except the brand-gold pair used as `var(--t-…, #hex)` fallbacks.
+- **Implementation notes:**
+  - **Check `twenty-ui` against v2.41 in the Phase 0 spike (F0.3), and pin it with the SDK.** Twenty's docs mark it *alpha*, with versions tracking the SDK, and the examples come from Twenty's main branch.
+  - In the same spike, confirm that a front component built with `twenty-ui` / `useTheme()` actually renders with the Integra theme (gold, Manrope) inside the deployed image.
+  - Where a needed primitive is missing, build it with `useTheme()` / `--t-*` tokens, copying the nearest native Twenty pattern.
+  - Optionally add a check to `verify-model.mjs` that fails on `shadcn` / `tailwind` imports under `src/front-components/`.
+
 ---
 
 ## Phase 0 — Foundations (prerequisite for A–E) · Effort **M**
@@ -221,6 +257,8 @@ Person   (+)  leadSource SELECT, dataSource TEXT, lawfulBasis SELECT (LEGITIMATE
 ```
 
 ### 4. UI/UX
+> **Design (§0 design principle):** all of this is CRM UI, so it uses Twenty's native look. `LeadScoreCard`, `LeadImportPanel`, `LeadQuickAdd` and `NewLeadsWidget` are built from `twenty-ui` (`Button` for Accept/Reject, `Tag` for the tier, `Status` for review state) and `useTheme()` tokens. The views are plain Twenty tables and kanbans.
+
 - **Views:**
   - `Lead review · 线索审核`: TABLE on LeadCandidate, filter `reviewStatus = PENDING_REVIEW`, sorted by `icpScore` descending.
   - `Leads by tier`: KANBAN grouped by `icpTier`.
@@ -357,6 +395,8 @@ Seeded lifecycles:
 - **Authority advisory:** Contact → Scoping → Proposal → Engagement → Delivered
 
 ### 4. UI/UX
+> **Design (§0 design principle):** CRM-only and native Twenty. Stream record pages use standard tabs and FIELDS / VIEW / FILES / TIMELINE widgets. `StreamKpiWidget`, `StreamStageStepper` and `StreamSummaryWidget` use `twenty-ui` primitives and `useTheme()` tokens. Pipeline kanbans are ordinary Twenty kanbans.
+
 - **Navigation:** "Product streams · 产品线" (OBJECT).
 - **ProductStream record page** (`product-stream-record.page-layout.ts`), with these tabs:
   - **Overview:** a `StreamKpiWidget` front component (open pipeline €, weighted pipeline from `StreamStage.probability`, won ARR, active clients, renewals within 90 days, open enquiries in this category), then FIELDS.
@@ -561,6 +601,10 @@ type PublicPricingV1 = {
 - Compared with the first draft, this drops the per-point `fromPrefix` and the strategy-level `indicativeOnly`.
 
 ### 4. UI/UX
+> **Design (§0 design principle):**
+> - **CRM side, native Twenty look:** `PricingPreview` and `QuoteBuilder` are built from `twenty-ui` primitives (`Button`, `Tag`, inputs) and `useTheme()` tokens. `PricingPreview` previews the *content and the from/exact rule*, not the website's brand styling. The live branded preview is the Cloudflare preview URL.
+> - **Website side:** keeps Integra's brand design (Tailwind) as today.
+
 **CRM:**
 - **PricingStrategy record page:**
   - **Overview:** FIELDS, plus a `PricingPreview` front component. It renders an approximation of the public card, lists validation errors live, and has **Approve / Preview / Publish** buttons.
@@ -715,6 +759,8 @@ CompetitorPriceObservation (competitorPriceObservations)
 ```
 
 ### 4. UI/UX
+> **Design (§0 design principle):** the CRM screens use Twenty's native look. `ResearchReportView`, `RunResearchNowButton` and `ResearchInboxWidget` use `twenty-ui` primitives and `useTheme()` tokens, rendering markdown with Twenty's typography. Findings and competitor views are plain Twenty views. The email digest is outside the CRM UI and is not affected.
+
 - **Navigation:** "Research · 市场调研" (ResearchReport).
 - **Views:**
   - `Reports`: table, newest first.
@@ -843,6 +889,10 @@ Person / Company (+)  tickets ← Ticket
 ```
 
 ### 4. UI/UX
+> **Design (§0 design principle):**
+> - **CRM side, native Twenty look:** `TicketThread` (messages and composer), `PromoteToLeadButton` and `TicketQueueWidget` are built from `twenty-ui` primitives and `useTheme()` tokens, and should feel like Twenty's own timeline/email thread. The inbox and queues are ordinary Twenty views.
+> - **Website side:** the contact form on `integra-web` keeps Integra's brand.
+
 - **Navigation:** "Enquiries · 咨询".
 - **Views:**
   - `Inbox`: kanban by status (NEW, OPEN, PENDING_CUSTOMER, ON_HOLD, RESOLVED).
@@ -1033,6 +1083,10 @@ Effort compared with the previous draft:
 ---
 
 ## Additional feature recommendations
+
+> **Design (§0 design principle):**
+> - **CRM-side UI** in these extras follows Twenty's native design: X1 `CardCapture` and the Fair capture page, X3 quote status, X5 registration views.
+> - **Website and portal pages** keep Integra's brand: the X5 `/training` calendar, and the section S `/sign/[token]` page used by X3.
 
 | # | Feature | Technical approach | Data model | Why it fits | Effort |
 |---|---|---|---|---|---|
