@@ -9,7 +9,7 @@ Effort scale (for one developer): **S** < 1 week · **M** 1–3 weeks · **L** 3
 | # | Decision | Where it lands in this plan |
 |---|---|---|
 | D1 | **Apify** is the approved LinkedIn company-data source (e.g. actor `harvestapi/linkedin-company`). **Firecrawl Alexandria** is an optional enrichment provider. We still do not build our own scraper or browser extension. | Feature A (sources, data model, phases, guardrails) |
-| D2 | **eIDAS-compliant signatures from an EU qualified trust service provider (QTSP)** replace DocuSign everywhere: AR mandates, service agreements, quotes. The portal's Phase 5 DocuSign work is redirected to the QTSP, and the CRM uses the same provider. | New section **S**; Feature C; extra #3; roadmap |
+| D2 *(revised 3 Oct)* | **Free, self-hosted eIDAS-framework signing replaces DocuSign everywhere** (AR mandates, service agreements, quotes), with **no paid QTSP**. PDFs carry a document ID (`EIDAS-{type}-{timestamp}-{hash}`) and are sealed with the platform's ECDSA P-256 keys (`packages/core/src/signing/`) as a PAdES certification signature, then checked with the EU's free validator. Portal Phase 5 and the CRM both use this pipeline. Cost €0/month. | New section **S**; Feature C; extra #3; roadmap |
 | D3 | **Pricing display:** if `strategyType === ADD_ON` or the strategy has optional extras, show "from €X". Otherwise show exact totals. TIERED and BUNDLE show exact totals per tier or bundle option. `fromPrefix` is set per strategy. | Feature C (rule, data model, `PublicPricingV1`, components, tests) |
 | D4 | The CRM is self-hosted and internal-only. **The SAML licence item is closed** and removed from the risks. | §0, risks |
 | D5 | **Portal spec amendments approved** for the C3 Stripe lookup-key contract, X2 portal↔CRM sync, and X3 CPQ + eIDAS signing, together with the database migrations they need. | §0, Feature C, extras #2 and #3, roadmap |
@@ -27,7 +27,7 @@ Effort scale (for one developer): **S** < 1 week · **M** 1–3 weeks · **L** 3
 | Website contact form | `<form action="mailto:info@...">` with no backend and no spam protection. The site is `output: "export"` on Cloudflare Pages. | Enquiries currently depend on the visitor's desktop mail client, which usually fails in WeChat's in-app browser and on phones. Feature E fixes a real leak. |
 | CRM app with objects/views | `crm/app` **has never been `npm install`ed, typechecked or synced** (README). It has no logic functions. `ops/nightly-status.mjs` is **not scheduled by anything**. The worker runs with `DISABLE_CRON_JOBS_REGISTRATION=true`. | Everything depends on a **Phase 0** that makes the app real and proves Twenty logic functions on v2.41. |
 | — | Portal `CONSTITUTION.md`: the spec is supreme. Article 10 requires human approval for new deps, infra, migrations and workflow changes. `MISSION.md` lists "AI chatbot" and "Training portal" as non-goals. | Keep A, B, D and E (and most of C) **in the CRM and website**. The portal-touching parts (C3, extras #2 and #3) need spec amendments. **These and their database migrations were approved by the founder on 3 Oct 2026 (D5).** Any new dependencies, `sst.config.ts`/infra changes and workflow changes still go through Article 10 approval one by one. |
-| DocuSign (in the brief's stack) | The portal has an SST secret `DocusignIntegrationKey`, an SQS `DocusignQueue` with no subscriber, and the column `ar_mandates.docusignEnvelopeId`. The CRM's `ArMandate` has a `docusignEnvelopeId` field. Nothing calls DocuSign yet. | **Replaced by eIDAS QTSP signing (D2).** See section S for the renames and migration. Because nothing is built yet, the switch costs almost nothing. |
+| DocuSign (in the brief's stack) | The portal has an SST secret `DocusignIntegrationKey`, an SQS `DocusignQueue` with no subscriber, and the column `ar_mandates.docusignEnvelopeId`. The CRM's `ArMandate` has a `docusignEnvelopeId` field. Nothing calls DocuSign yet. | **Replaced by free, self-hosted PAdES signing on the existing platform keys (D2).** See section S for the renames and migration. Because nothing is built yet, the switch costs almost nothing. |
 | Pricing | Canonical pricing is in Digest §3.1, which matches spec §8.1 and legal Schedule 2: Beginner/Boost/Builder/Boss, AR €250/€1,200/€3,000, DPP €950/€2,500/€6,000, bundle −15%, plus DPP and sector add-ons. Older price models in `Service_Offering.md` and the GTM doc are superseded. | Seed data for B and C comes from the canonical table. **No prices are published on the website today.** |
 | Calendar | Today is 3 Oct. **Canton Fair is 15–19 Oct 2026** (12 days away), which GTM rates as the HIGH channel and the launch event. Battery DPP becomes mandatory on **18 Feb 2027**. | The roadmap front-loads E1 and fair lead capture, and keeps the portal team on the DPP critical path. |
 
@@ -437,9 +437,10 @@ Three parts:
   - The **spec amendment** recording the lookup-key/metadata contract is **approved (D5)**. Write it into the spec before Phase 6 starts.
 - **Per-client agreements:**
   - Discount only → Stripe **Coupon** + customer-restricted **Promotion Code**, sent with the checkout link.
-  - Custom amount or multi-line → Stripe **Quote** with `price_data` line items. The Quote is the billing object; **acceptance happens through eIDAS signing (D2, section S), not Stripe's hosted "accept" page**:
-    1. The finalised quote PDF (bilingual, from extra #3) goes to the client through the QTSP. Integra applies a qualified electronic seal and the client signs at the level section S sets for quotes.
-    2. On the QTSP's "signed" event, the signing service calls `stripe.quotes.accept(quoteId)`, which creates the subscription.
+  - Custom amount or multi-line → Stripe **Quote** with `price_data` line items. The Quote is the billing object; **acceptance happens through the section S signing pipeline (D2), not Stripe's hosted "accept" page**:
+    1. The bilingual quote PDF (`EIDAS-QUO-…` document ID, from extra #3) is shown to the client on the portal's `/sign/[token]` page. The client accepts with a simple electronic signature (one-time code, typed name, consent).
+    2. The evidence page is added and Integra seals the PDF with its platform key (PAdES, DocMDP P=1).
+    3. On `sealed`, the signing service calls `stripe.quotes.accept(quoteId)`, which creates the subscription.
     3. The agreement moves to ACCEPTED.
   - **Boss** tier → Stripe **Invoice** with `collection_method: send_invoice`, net 30, matching the legal Schedule.
   - Payment methods per spec §8.2: card, SEPA Debit, Alipay. **Verify Alipay with recurring subscriptions.** Annual `send_invoice` lets clients pay each invoice by Alipay on the hosted invoice page.
@@ -516,7 +517,7 @@ ClientPriceAgreement (clientPriceAgreements) "Price agreement · 价格协议"
   status SELECT (DRAFT, PENDING_APPROVAL, APPROVED, SENT, ACCEPTED, DECLINED, EXPIRED)
   approvalRequired BOOLEAN (computed: discount > 15% or amount < floorAmount) · approvedBy → WorkspaceMember
   stripeCouponId · stripePromotionCode · stripeQuoteId · stripeInvoiceId · stripeSubscriptionId TEXT
-  signatureRequestId TEXT · signatureStatus SELECT (NOT_SENT, SENT, SIGNED, DECLINED, EXPIRED)   (eIDAS, section S)
+  signatureRequestId TEXT · documentId TEXT · signatureStatus SELECT (NOT_SENT, AWAITING_CLIENT, SEALED, DECLINED, EXPIRED)   (section S)
 
 PricingPublication (pricingPublications)     — audit log
   name · target SELECT (PREVIEW, PRODUCTION) · snapshot RAW_JSON · commitSha TEXT · commitUrl LINKS
@@ -613,7 +614,7 @@ type PublicPricingV1 = {
 - **Stripe** (catalogue from CRM; billing in portal Phase 6).
 - **Portal:** `organisations.tier/subscriptionType/stripeCustomerId`, new `subscriptions` / `stripe_events`, webhook route `apps/portal/src/app/api/webhooks/stripe/route.ts`. This route must be **added to `lib/auth/public-routes.ts`**, and `StripeWebhookSecret` must be **linked to the Portal in `infra/web.ts`** (today only `StripeSecretKey` is linked).
 - **Feature E:** quote-only CTAs prefill the enquiry form.
-- **Extra #3 + section S:** quote and mandate generation, signed through the eIDAS QTSP. A signed quote triggers `stripe.quotes.accept`.
+- **Extra #3 + section S:** quote and mandate generation; client acceptance (SES) followed by Integra's PAdES seal on the platform key. A sealed quote triggers `stripe.quotes.accept`.
 
 ### 6. Phases
 | Phase | Scope | Deliverable |
@@ -886,100 +887,148 @@ Person / Company (+)  tickets ← Ticket
 
 ---
 
-## S — E-signatures: eIDAS QTSP (replaces DocuSign) · decision D2
+## S — E-signatures: free, self-hosted PAdES signing (replaces DocuSign) · decision D2 (revised)
 
 ### 1. Summary
-Every signature workflow (AR mandates, AR service agreements, quotes and order forms, and later any other contract) uses **one EU qualified trust service provider (QTSP)** under the eIDAS framework: Regulation (EU) 910/2014 as amended by (EU) 2024/1183. The integration is built **once, in portal core**: portal Phase 5 is redirected from DocuSign to this provider. The CRM requests signatures through that same service, so there is one provider contract, one evidence store and one audit trail.
+Signatures cost **€0 a month**: no QTSP and no new external service. A single PDF pipeline in portal core does this for each AR mandate, AR service agreement and quote:
+1. Renders the document as a PDF, with a **document ID** in the XMP metadata and in a visible footer on every page.
+2. Records the client's acceptance on an evidence page inside the PDF.
+3. **Seals** the PDF with a **PAdES signature** using a platform ECDSA P-256 key from the existing `packages/core/src/signing/` module (portal Phase 1b). This is a *certification* signature, so any later change to the PDF is detectable.
 
-### 2. Signature levels per document
-eIDAS defines three levels:
-- **SES** (simple);
-- **AdES** (advanced: uniquely linked to and identifies the signer);
-- **QES** (qualified: an AdES made with a qualified signature-creation device and a qualified certificate). A QES has the legal effect of a handwritten signature in every member state (Art. 25(2)).
+Anyone can check the result with the EU's free [eSignature validator](https://eidas.ec.europa.eu/efda/validation-tool); we don't build validation ourselves. The CRM triggers the same pipeline.
 
-A legal person can apply a **qualified electronic seal**. **Qualified timestamps** and long-term-validation PDFs (PAdES B-LTA) keep signatures verifiable for years, which matters for a mandate that market-surveillance authorities may inspect.
+### 2. What this produces, legally and in the EU validator (read before relying on it)
+| Question | Answer |
+|---|---|
+| Whose signature is it? | The platform key belongs to **Integra**, so the PAdES signature is **Integra's** seal. It is not the client's signature. |
+| Integra side: level | Built to meet the requirements of an **advanced electronic seal** (eIDAS Art. 36: uniquely linked to and identifying Integra Scientific Ltd, created with a key under Integra's control, any later change detectable), in **PAdES (AdES) format**. It is **not qualified**: there is no qualified certificate and no qualified signature-creation device. |
+| Client side: level | The platform key **cannot** serve as the client's advanced signature. Art. 26 requires the signature-creation data to be under the *signatory's* sole control, and Integra holds this key. The client's assent is therefore captured as a **simple electronic signature (SES)** through authenticated acceptance: a portal login or a tokenised link plus an email one-time code, a typed full name, a consent tick-box, IP / user-agent / time, and the SHA-256 of the exact draft PDF shown. This evidence is printed on an evidence page inside the PDF **before** Integra seals it. Under Art. 25(1), an SES cannot be denied legal effect solely because it is electronic. |
+| What the EU validator will show | The validator checks certificates against trust anchors from the EU List of Trusted Lists (plus the third-country AdES list). Integra's self-issued certificate is on neither. **Expect the overall result `INDETERMINATE` with sub-indication `NO_CERTIFICATE_CHAIN_FOUND`.** The detailed report should still show the format recognised as PAdES-BASELINE-B/-T and the signature cryptographically intact (document unchanged since sealing). **That is the realistic pass criterion.** `TOTAL_PASSED` needs a chain to an EU-trusted CA, which a free self-hosted certificate can't have. |
+| How a third party confirms the seal is Integra's | Compare the signer certificate's SHA-256 fingerprint with the one Integra publishes at `integrascientific.com/.well-known/document-seal.json`, on the website's legal page, and in the mandate text. Until a reader chooses to trust that certificate, Adobe Reader shows "signature validity is unknown". |
+| Is it enough for AR mandates? | Reg. 2019/1020 Art. 4 requires a written mandate; it does not prescribe an e-signature level. Whether **client SES + Integra advanced seal** is sufficient, including towards market-surveillance authorities, is a **question for Maltese counsel** and is the S1 gate. If counsel requires a stronger client signature for mandates, that can be added later for that one document type without changing this pipeline. |
 
-| Document | Integra side | Client side | Notes |
-|---|---|---|---|
-| **AR mandate** (Reg. 2019/1020 Art. 4: a written mandate) | QES by the authorised Integra signatory **plus** Integra Scientific Ltd's qualified seal | **QES** where the client's signatory can complete the QTSP's remote identity check; otherwise **AdES + qualified timestamp** | Art. 4 requires a written mandate but does not itself prescribe an e-signature level. **Confirm the minimum level with Maltese counsel** before go-live. |
-| **AR service agreement** (`legal/Integra_AR_Service_Agreement_v1.2.docx`, Malta law) | Same as the mandate | Same as the mandate | Signed in the same transaction as the mandate. |
-| **Quote / order form** (C2 / extra #3) | Qualified seal on the PDF (proves origin and integrity) | AdES (or SES where the counsel review allows) | Signing triggers `stripe.quotes.accept` (Feature C). |
-| Renewals / amendments | Qualified seal | Same level as the original contract | — |
-
-### 3. Provider selection (short PoC, then one contract)
-- **Hard criteria:**
-  1. On the **EU Trusted List** (eidas.ec.europa.eu trust-services browser) for qualified certificates for e-signatures, qualified e-seals and qualified timestamps.
-  2. **Remote identity verification that accepts PRC passports**, with a Chinese-language signer UI. Most counterparties are Chinese signatories, so this is the deciding criterion.
-  3. REST API + webhooks + sandbox.
-  4. EU data residency.
-  5. PAdES B-LTA output + downloadable evidence / audit trail.
-  6. Per-transaction pricing.
-- **Candidates to test** (each publicly states QTSP status; verify each service on the Trusted List):
-  - **DocuSign EU Qualified.** DocuSign France SAS is a QTSP supervised by ANSSI and listed on the French trusted list. This answers the founder's question: DocuSign *does* offer eIDAS QES through an EU QTSP, so it remains an option *as a QTSP*. Its EU qualified flow can also use Evrotrust as the identifying QTSP.
-  - **Evrotrust** (Bulgaria): QTSP, remote identification marketed for 58 countries, SES/AdES/QES.
-  - **Namirial** (Italy): QTSP, eSignAnyWhere workflow API.
-  - **InfoCert** (Italy, Tinexta).
-  - **Universign** (France): QTSP, SES/AdES/QES.
-- **PoC (S, about 1 week, founder + one developer):** take two shortlisted providers end-to-end. Sign a real mandate template with an Integra QES + seal, and a test signatory holding a Chinese passport on a phone in mainland China. Score identity-check pass rate and time, signer UX in Chinese, API/webhook quality, evidence package and price. Then pick one.
-
-### 4. Architecture
+### 3. Pipeline
 ```
-CRM (Twenty)                         portal core (single signing service)                 QTSP
-QuoteBuilder / ArMandate  ──POST /internal/v1/signature-requests──▶  packages/core/src/signing/
-  logic fn `signature-request`        (API Gateway route, shared-secret / IAM auth)        ├─ SignatureProvider interface
-portal Phase 5 AR flow ─────────────────────────────────────────────▶ ├─ providers/<qtsp>.ts  ──▶ create request (docs, signers, level)
-                                                                        └─ signature_requests table
-QTSP webhook ──▶ POST /v1/webhooks/signing (verify provider HMAC) ──▶ SignatureQueue (was DocusignQueue)
-                                                                   ──▶ consumer: fetch signed PDF + evidence → S3 Documents (versioned)
-                                                                        → update ar_mandates / quote status → stripe.quotes.accept (quotes)
-                                                                        → CRM: GET poll (until X2) / CrmSyncQueue event (after X2)
+CRM (QuoteBuilder / ArMandate)  ──POST /internal/v1/signature-requests──┐
+portal Phase 5 AR flow ─────────────────────────────────────────────────┤
+                                                                         ▼
+1. render    Lambda `document-render` (SignatureQueue consumer): template + data → draft PDF (EN/ZH, Noto Sans SC subset embedded)
+             documentId = EIDAS-{TYPE}-{yyyyMMddHHmmss}-{contentHash12} → XMP metadata + visible footer on every page
+2. accept    client opens portal page /[locale]/sign/[token] (Keycloak session, or tokenised link + email one-time code)
+             → views draft → types full name, ticks consent → evidence {method, subject, name, email, otpVerifiedAt,
+               ip, userAgent, consentTextVersion, draftSha256, acceptedAt} saved
+3. finalise  re-render = draft + evidence page (same documentId) → final PDF
+4. seal      PAdES certification signature, DocMDP P=1 ("no changes permitted"):
+             CMS SignedData, ECDSA P-256 / SHA-256, SubFilter ETSI.CAdES.detached, signing-certificate-v2 attribute,
+             Integra seal certificate + root embedded; optional free public RFC 3161 timestamp → PAdES-B-T
+5. lock      = step 4. DocMDP P=1 makes any later edit show as an invalid/modified signature in every validator.
+             PDF permission flags (no-modify) are also set, but they are advisory and easy to strip, so nothing relies on them.
+6. store     S3 Documents bucket (versioned) + SHA-256 → signature_requests; status → CRM (GET poll; X2 events later)
 ```
-- **Provider-agnostic interface:**
+- **Why the document ID uses the content hash, not the signature hash.** The ID is printed *inside* the signed content, so it can't contain a hash of a signature computed over that same content. `contentHash12` is the first 12 hex characters of the SHA-256 of the canonical document data (template ID + version + field values), computed with the existing `canonicalise()`. The signature-value hash and certificate fingerprint are recorded in `signature_requests` and the CRM instead. Everything else follows the founder's format: `EIDAS-{documentType}-{timestamp}-{hash}`, with `documentType` ∈ `ARM` (AR mandate), `ASA` (AR service agreement), `QUO` (quote).
+- **Naming decision for the founder.** A footer labelled "eIDAS compliance ID" reads like a claim of certified eIDAS compliance, and the EU validator's `INDETERMINATE` result would appear to contradict it. Suggested footer label: **"Document ID · 文件编号"**, keeping the `EIDAS-…` value unchanged, or switching the prefix to `INTEGRA-`. The pipeline is the same either way.
+
+### 4. Reusing and extending `packages/core/src/signing/`
+**What exists today (checked in the repo on 3 Oct):**
+- `keys.ts`: WebCrypto ECDSA P-256 key generation, plus JWK import and export.
+- `sign.ts`: `signPayload` / `verifySignature` over canonical JSON (raw base64 ECDSA signature).
+- `signing-key-store.ts`: `loadActiveSigningKey`, `generateAndStoreSigningKey`.
+- `hash-chain.ts`.
+- The `platform_signing_keys` table stores the public JWK **and the private JWK in plaintext**, with ES256, status and validity dates.
+- **There are no X.509 certificates.** A PAdES signature needs one embedded, so that part is new.
+
+**Extensions:**
+- **New PDF signing mode** alongside payload signing, in `signing/pdf/`:
   ```ts
-  interface SignatureProvider {
-    createRequest(i: { documents: { name: string; pdfS3Key: string }[];
-      signers: { name: string; email: string; phone?: string; role: 'integra'|'client'; order: number;
-                 level: 'SES'|'AES'|'QES' }[];
-      sealWithIntegraQualifiedSeal: boolean; locale: 'en'|'zh'; expiresAt: Date }): Promise<{ providerRequestId: string }>;
-    getStatus(id: string): Promise<SignatureStatus>;
-    downloadSigned(id: string): Promise<Uint8Array>;      // PAdES B-LTA
-    downloadEvidence(id: string): Promise<Uint8Array>;    // audit trail / validation report
-  }
+  signPdf(pdf: Uint8Array, key: ActiveSigningKey,
+          opts: { certification: 'NO_CHANGES'; tsaUrl?: string }): Promise<{ pdf: Uint8Array; signatureValueSha256: string }>
   ```
-  If the provider is ever changed, only one adapter file changes.
-- **The CRM never holds QTSP credentials.** Its `signature-request` logic function calls the portal's internal route. Status flows back through a 15-minute GET poll until extra #2 (portal↔CRM sync) lands, then through `CrmSyncQueue` events.
+  It takes the same WebCrypto `CryptoKey` from the key store.
+  - CMS SignedData via **PKI.js**; certificates via **@peculiar/x509**. Both are WebCrypto-based and support ECDSA P-256. node-forge can't do ECDSA CMS.
+  - ByteRange placeholder via **@signpdf** (custom signer) or **pdf-lib**.
+  - Rendering via **@react-pdf/renderer** (or pdf-lib) with a Noto Sans SC subset for the Chinese text.
+  - These are new dependencies, so each needs Article 10 approval.
+- **Certificates (free, self-managed):**
+  - **Root:** "Integra Scientific Document Root CA" (ECDSA P-256, 10 years). Generated offline once; its private key stays offline.
+  - **Seal certificate issued by that root:** "Integra Scientific Ltd — Document Seal".
+    - Subject: `O=Integra Scientific Ltd, C=MT`, plus organisationIdentifier `VATMT-…`.
+    - Key usage: `digitalSignature` + `nonRepudiation`. Validity: 2 years.
+  - Publish the root fingerprint (§2).
+- **Key separation:** use a dedicated `document_seal` key, *not* the DPP payload key. Then rotating or compromising one never affects the other.
+  - `loadActiveSigningKey(db, purpose)` becomes purpose-scoped.
+  - It must **not auto-generate** a `document_seal` key. Today it silently creates a key when none is active, and a fresh key would have no certificate.
+- **Private-key storage:**
+  - Don't keep the seal key as a plaintext JWK row. **Free option:** an SST Secret (SSM SecureString, standard tier), referenced by `private_key_ref`.
+  - **Stronger, but outside the €0 target (founder's call):** an AWS KMS asymmetric `ECC_NIST_P256` key, so the private key never leaves KMS. About $1 a month.
+  - Separately, the existing DPP key is also stored in plaintext. Add that to the Phase 9 hardening list.
 
 ### 5. Data model and renames (migrations approved, D5)
 ```ts
-// portal: packages/core/src/db/schema/signing.ts  (new)
-signature_requests: id uuid PK, organisation_id FK → organisations NULL (CRM-originated prospects may have no portal org),
-  subject_type enum (ar_mandate, service_agreement, quote, other), subject_ref varchar (portal id or "twenty:<object>:<id>"),
-  provider varchar, provider_request_id varchar unique, level enum (ses, aes, qes),
-  status enum (draft, sent, viewed, signed, declined, expired, failed, cancelled),
-  signers jsonb, document_s3_key, signed_document_s3_key, evidence_s3_key, integra_seal_applied boolean,
-  created_by varchar, sent_at, completed_at, expires_at, created_at, updated_at
-// portal: ar_mandates — drop docusign_envelope_id, add signature_request_id FK → signature_requests (keep signed_at)
-```
-- **Portal infra** (each still a per-change Article 10 approval; D5 covered the spec amendment and migrations only):
-  - secret `DocusignIntegrationKey` → `SigningProviderApiKey` + `SigningWebhookSecret`;
-  - queue `DocusignQueue` → `SignatureQueue` with a subscriber;
-  - API Gateway route `POST /v1/webhooks/signing` and internal route `POST|GET /internal/v1/signature-requests`;
-  - the provider SDK, if one is used, is a new dependency.
-- **Spec amendment (approved, D5):** replace DocuSign with "eIDAS QTSP (provider per PoC)" in the locked stack (`CLAUDE.md` / spec), Phase 5 and the AR flow.
-- **CRM** (the app has never been synced, so renaming is free):
-  - `ArMandate.docusignEnvelopeId` → `signatureRequestId`. Keep the universal ID in `ids.ts` and update the label.
-  - Add to ArMandate `signatureStatus` SELECT (NOT_SENT, SENT, SIGNED, DECLINED, EXPIRED), `signatureLevel` SELECT (SES, AES, QES) and `signedAt` DATE_TIME. Signed PDFs and evidence go into the existing `documents` FILES field.
-  - `ClientPriceAgreement` and the extra #3 `Quote` get `signatureRequestId` + `signatureStatus`.
-  - `MANDATE_STATUS` SENT/SIGNED transitions are driven by `signatureStatus`.
+// platform_signing_keys — new columns
+purpose            signing_key_purpose enum (dpp_payload, document_seal) NOT NULL DEFAULT 'dpp_payload'
+certificate_pem    text NULL          // X.509 seal certificate (document_seal keys)
+certificate_chain_pem text NULL       // Integra Document Root CA
+certificate_sha256 varchar(64) NULL   // published fingerprint
+private_key_ref    varchar(255) NULL  // SST secret name (or KMS key id); private_key_jwk becomes NULLable, NULL for document_seal
 
-### 6. Phases and effort
+// signature_requests — new table
+id uuid PK
+document_id        varchar(80) UNIQUE NOT NULL           // EIDAS-{TYPE}-{yyyyMMddHHmmss}-{contentHash12}
+organisation_id    uuid FK → organisations NULL          // CRM-originated prospects may have no portal org yet
+subject_type       enum (ar_mandate, service_agreement, quote, other)
+subject_ref        varchar                               // portal id or "twenty:<object>:<id>"
+template_id        varchar · template_version varchar · content_hash char(64)
+signing_key_id     uuid FK → platform_signing_keys NOT NULL   // the platform key that sealed it
+certificate_sha256 varchar(64)                           // fingerprint of the seal certificate used
+pades_level        enum (b_b, b_t) · tsa_url varchar NULL
+status             enum (draft, awaiting_client, accepted, sealed, declined, expired, failed, cancelled)
+access_token       char(64) UNIQUE · token_expires_at timestamptz   // tokenised link, same pattern as supplier_data_requests
+client_acceptance  jsonb  // {method:'portal'|'link_otp', subject, name, email, otpVerifiedAt, ip, userAgent,
+                          //  consentTextVersion, draftSha256, acceptedAt}
+draft_pdf_s3_key · sealed_pdf_s3_key · sealed_pdf_sha256 char(64) · signature_value_sha256 char(64)
+created_by · created_at · sealed_at · expires_at · updated_at
+
+// ar_mandates: drop docusign_envelope_id; add signature_request_id FK → signature_requests (keep signed_at)
+```
+- **Portal infra** (each item is a per-change Article 10 approval; D5 covered the spec amendments and migrations only):
+  - Queue `DocusignQueue` → `SignatureQueue`, with a `document-render` subscriber (Lambda).
+  - Remove secret `DocusignIntegrationKey`; add `DocumentSealKey`.
+  - Internal API route `POST|GET /internal/v1/signature-requests` (shared-secret or IAM auth).
+  - Add the public page `/[locale]/sign/[token]` to `lib/auth/public-routes.ts`.
+  - **No inbound webhook from an external provider is needed.**
+- **Spec amendment (approved, D5):** replace DocuSign in the locked stack (`CLAUDE.md` / spec), Phase 5 and the AR flow with "self-hosted PAdES seal + client SES (section S)".
+- **CRM** (the app has never been synced, so renaming is free):
+  - `ArMandate.docusignEnvelopeId` → `signatureRequestId`. Keep the universal ID in `ids.ts`.
+  - Add `documentId` TEXT, `signatureStatus` SELECT (NOT_SENT, AWAITING_CLIENT, SEALED, DECLINED, EXPIRED) and `signedAt` DATE_TIME.
+  - The sealed PDF goes into the existing `documents` FILES field.
+  - `ClientPriceAgreement` and the extra #3 `Quote` get the same `signatureRequestId` / `documentId` / `signatureStatus`.
+  - `MANDATE_STATUS` SENT → SIGNED follows `signatureStatus` AWAITING_CLIENT → SEALED.
+
+### 6. Verification (we don't build a validator)
+- **Each template release:** seal a sample, upload it to the EU validator, and commit the simple report to `integra-portal/docs/signing/validation-reports/`.
+  - **Pass:** PAdES baseline format recognised, signature intact, and `NO_CERTIFICATE_CHAIN_FOUND` as the only finding.
+- **CI:** a unit/integration test re-verifies the CMS signature over the ByteRange with PKI.js and checks that an edited copy fails. This is a regression test, not a validation service.
+
+### 7. Cost
+**€0/month** on the free path:
+- Lambda rendering and sealing, plus S3 storage, at Integra's volume stay inside existing spend.
+- SST Secret (SSM standard tier): free.
+- Optional public RFC 3161 timestamping (e.g. DigiCert's or Sectigo's free timestamp servers; check their terms of use): free, but not qualified.
+
+The only optional paid item is KMS key custody, at about $1/month. There are no QTSP fees.
+
+### 8. Phases and effort
 | Phase | Scope | When |
 |---|---|---|
-| **S1** (S) | Counsel confirms signature levels; QTSP PoC with 2 providers; contract signed. | Wave 1 (founder-led, parallel to development) |
-| **S2** (M) | `SignatureProvider` + adapter, `signature_requests`, webhook → `SignatureQueue` consumer, renames/migration, AR mandate + service agreement flow in portal Phase 5. | Wave 2, inside portal Phase 5 (replaces the DocuSign work already planned there; no added effort) |
-| **S3** (S) | CRM `signature-request` logic function + status poll; quote signing → `stripe.quotes.accept`. | Wave 3, with C3 / extra #3 |
+| **S1** (S) | Root CA + seal certificate + purpose-separated `document_seal` key in an SST Secret; publish the fingerprint; **counsel review** of client SES + Integra advanced seal for AR mandates; founder signs off the document-ID label. | Wave 1 (one developer + counsel) |
+| **S2** (M) | `document-render` Lambda; `signPdf` (PAdES-B-B/-T, DocMDP P=1); acceptance page + evidence; `signature_requests`; migrations; AR mandate + service agreement flow inside portal Phase 5; EU-validator check of each template. | Wave 2, inside portal Phase 5 (replaces the DocuSign work planned there) |
+| **S3** (S) | CRM `signature-request` logic function + status poll; quote acceptance → `stripe.quotes.accept`. | Wave 3, with C3 / extra #3 |
 
-Net effort is roughly neutral against the original DocuSign plan, plus the S1 PoC. Extra #3 stays **L**.
+Effort compared with the previous draft:
+- **S1 is lighter:** no provider selection or contract.
+- **S2 is still M** but somewhat heavier, because PAdES signing is now built in-house instead of calling a provider API.
+- **Extra #3 stays L.**
+
 
 ---
 
@@ -989,7 +1038,7 @@ Net effort is roughly neutral against the original DocuSign plan, plus the S1 Po
 |---|---|---|---|---|---|
 | 1 | **Fair & business-card capture** | A "Fair capture" STANDALONE_PAGE layout with a `CardCapture` front component (mobile camera upload; works in Twenty's mobile web UI). An httpRoute stores the image, then Claude vision (`claude-opus-5-5`, structured output) extracts nameEn/nameZh, company, title, phone, email, WeChat and products. The result becomes a LeadCandidate (A) or, with "fast accept", a Person with `leadStatus=NEW` on the existing Fair-leads kanban. Batch mode handles a folder of photos after the fair. | `Event` (name, nameZh, startDate, endDate, city, stream →, boothRef); `CaptureItem` (image FILES, extracted RAW_JSON, status, event →, capturedBy →, leadCandidate →); `Person.event` → Event | Canton Fair (15–19 Oct) is the #1 launch channel and is 12 days away. The `fair-leads-kanban` view already anticipates "Requirement 6 (Canton Fair intake)". | **S–M** |
 | 2 | **Portal ↔ CRM account sync (Customer 360)** | The portal publishes domain events (org created, subscription changed, DPP published, tier limit at 80%, AR mandate signed, last login) to a new SQS `CrmSyncQueue`. A Lambda consumer upserts the Company in Twenty REST by `portalOrganisationId`. The CRM creates upsell Opportunities on tier-limit events. **Spec amendment and migrations approved (D5).** The new queue and Lambda are still a per-change infra approval. It also carries signature status events (section S) back to the CRM. | Company (+) `portalOrganisationId`, `portalTier`, `subscriptionStatus`, `dppCount`, `publishedDppCount`, `tierLimitUsagePct`, `lastPortalActivityAt`. Decide the source of truth for AR mandates: the portal `ar_mandates` (legal record) vs CRM `ArMandate` (mirror). | It closes the C3 loop, drives renewals and upgrades from real usage, and removes double entry of mandates. | **M–L** |
-| 3 | **Quote & mandate generation with eIDAS signing** (D2) | OpportunityLines + ClientPriceAgreement → bilingual quote PDF (rendered in a Lambda, stored in S3 / Twenty FILES). The AR Mandate + Service Agreement (`legal/Integra_AR_Mandate_v1.2.docx`, Schedule 2) are filled from CRM/portal data into PDFs. They are sent through the **section S signing service** (EU QTSP) at the levels section S defines (Integra QES + qualified seal; client QES or AdES + qualified timestamp). The QTSP webhook → `SignatureQueue` → status SIGNED/ACTIVE and `renewalDate = start + 12 months`; for quotes, `stripe.quotes.accept`. It is built once in portal core: portal Phase 5 is redirected from DocuSign to the QTSP, and the unused `DocusignQueue` becomes `SignatureQueue`. The CRM triggers it through the internal route. **Spec amendment and migrations approved (D5).** | `Quote` (opportunity →, number, pdf FILES, validUntil, status, signatureRequestId, signatureStatus); ArMandate (+) `signatureRequestId` (renamed from `docusignEnvelopeId`), `signatureStatus`, `signatureLevel`, `signedAt`; portal `signature_requests` (section S) | It turns C's prices into signed revenue with no retyping; AR mandates are the core recurring product; EU-qualified signatures suit a Malta-based, EU-regulated AR. | **L** |
+| 3 | **Quote & mandate generation with free PAdES signing** (D2) | **Integration points:**<br>• **CRM → portal:** the CRM (`QuoteBuilder`, ArMandate) calls the portal's internal `POST /internal/v1/signature-requests`, the same entry point portal Phase 5 uses.<br>• **Render:** the `document-render` Lambda (`SignatureQueue` subscriber, replacing the unused `DocusignQueue`) turns OpportunityLines + ClientPriceAgreement into a bilingual quote PDF. It fills the AR Mandate + Service Agreement (`legal/Integra_AR_Mandate_v1.2.docx`, Schedule 2, re-authored as code templates) from CRM/portal data. Each PDF gets an `EIDAS-{ARM|ASA|QUO}-…` document ID in metadata and footer.<br>• **Client acceptance:** a simple electronic signature on the portal page `/[locale]/sign/[token]` (Keycloak session or tokenised link + email one-time code).<br>• **Seal:** Integra's PAdES certification seal (DocMDP P=1) from `packages/core/src/signing/` with the `document_seal` platform key.<br>• **Store:** S3 Documents bucket.<br>• **After sealing:** status SEALED → ArMandate SIGNED/ACTIVE and `renewalDate = start + 12 months`; for quotes, `stripe.quotes.accept`.<br>• **Status to CRM:** via GET poll, then X2 events.<br>• **Checking:** the EU validator for each template release.<br>• **Cost:** no external signing service, €0/month. **Spec amendment and migrations approved (D5).** | `Quote` (opportunity →, number, pdf FILES, validUntil, status, documentId, signatureRequestId, signatureStatus); ArMandate (+) `signatureRequestId` (renamed from `docusignEnvelopeId`), `documentId`, `signatureStatus`, `signedAt`; portal `signature_requests` with `signing_key_id` → `platform_signing_keys` (section S) | It turns C's prices into signed revenue with no retyping, and AR mandates are the core recurring product. It reuses signing code that already exists, with no per-signature fees. | **L** |
 | 4 | **Renewal & regulatory-deadline automation** | Port `nightly-status.mjs` to cron (Phase 0), then add renewal sequences at 90/60/30 days: a client email in ZH/EN, a task for the account manager, and a Stripe invoice draft for `send_invoice` customers. A `RegulationMilestone` object, kept current with D's regulatory findings, segments Companies by `productCategory` to drive deadline-based nurture emails (e.g. the Battery DPP 18 Feb 2027 countdown) and keeps `KEY_DATES` / DPP Compass in sync. | `RegulationMilestone` (regulation, productCategory MULTI_SELECT, milestoneDate, status PROPOSED/ADOPTED/IN_FORCE, sourceUrl, finding →); `NurtureSend` (company →, person →, milestone →, template, sentAt, sesMessageId) | Renewal is the business model (the CRM "is built to make the renewal clock visible"). Deadline-driven urgency is Integra's strongest sales argument. | **M** |
 | 5 | **Training registration & paid enrolment** | Publish `TrainingEvent`s (date, language, price point from C `PER_SEAT`) to `integra-web/data/training.json` via the same git-commit pipeline. A website `/training` calendar uses Stripe Payment Links / Checkout per seat, with registrations via the Feature E Pages Function. Attendees become Persons (leads). The free quarterly "Appointing an EU AR" webinar is the lead magnet named in the strategy docs. This stays out of the portal (MISSION non-goal: training portal). | `TrainingRegistration` (trainingEvent →, person →, company →, seats, paid BOOLEAN, stripeCheckoutSessionId, attended BOOLEAN, certificate FILES); TrainingEvent (+) `language`, `capacity`, `publicListing BOOLEAN`, `pricePoint →` | It turns the Training stream into a self-serve funnel feeding DPP/AR, reusing C and E. | **M** |
 
@@ -1012,7 +1061,7 @@ Phase 0 (app real + logic-fn spike + SES + Anthropic) ─┬─▶ E1 ──▶ 
                                                        │       ├─▶ D1 ──▶ D2 ──▶ D3        │
                                                        │       └─▶ B2 ──▶ B3               ▼
                                                        └─▶ X4 renewals (cron proven)   X2 Portal↔CRM sync ──▶ X3 CPQ + eIDAS
-                                                       S1 QTSP PoC ──▶ S2 signing service (portal Phase 5) ──▶ S3 CRM/quote signing ──▶ X3
+                                                       S1 seal key + cert + counsel ──▶ S2 PDF render + PAdES seal (portal Phase 5) ──▶ S3 CRM/quote signing ──▶ X3
  E1 ─▶ A (enquiries scored)     D2 ─▶ C (benchmarks)     C1/C2 ─▶ X5 training enrolment     D2 ─▶ X4 milestones
 ```
 
@@ -1020,11 +1069,11 @@ Phase 0 (app real + logic-fn spike + SES + Anthropic) ─┬─▶ E1 ──▶ 
 
 | Window | Track C (CRM / web) | Track P (portal) | Why now |
 |---|---|---|---|
-| **Wave 0** · 5–14 Oct | Phase 0 (F0.1–F0.7); **E1** (or email-only fallback by 12 Oct); **B1** (streams needed for enquiry categories); **X1** card capture, batch mode at minimum | Continue Phase 3. Write the approved spec amendments (D5) into the spec: Stripe lookup-key contract (C3), DocuSign → eIDAS QTSP (Phase 5 / X3), portal↔CRM sync (X2) | Canton Fair traffic and contacts start 15 Oct; mailto is leaking enquiries today |
+| **Wave 0** · 5–14 Oct | Phase 0 (F0.1–F0.7); **E1** (or email-only fallback by 12 Oct); **B1** (streams needed for enquiry categories); **X1** card capture, batch mode at minimum | Continue Phase 3. Write the approved spec amendments (D5) into the spec: Stripe lookup-key contract (C3), DocuSign → self-hosted PAdES signing (Phase 5 / X3), portal↔CRM sync (X2) | Canton Fair traffic and contacts start 15 Oct; mailto is leaking enquiries today |
 | *15–19 Oct* | *Fair support: capture, triage* | — | — |
-| **Wave 1** · 20 Oct – 30 Nov | **A1** (Apify-enrich + score fair exhibitor lists + cards); **E2**; **B2**; **C1** (prices on the website, D3 display rule); X4 renewal sequences | Phases 3–4. **S1** QTSP PoC + counsel review (founder-led) | Convert fair leads while warm; publishing prices removes sales friction (the competitor analysis recommends it) |
-| **Wave 2** · Dec – mid-Jan | **C2**; **D1 → D2**; **A2**; X5 training enrolment (optional) | Phase 5 (AR + admin, with **S2** eIDAS signing service in place of DocuSign); start Phase 6 against the C3 contract | Deal desk before first paid contracts; research once the catalogue is stable |
-| **Wave 3** · mid-Jan – Mar 2027 | **C3** CRM side (Stripe catalogue sync, agreements → Coupons/Quotes/Invoices); X2 sync consumer; **S3** CRM signature requests + quote signing; D3; E3; A3 | Phase 6 Stripe billing, Phase 8 email (reuse F0.6 SES), X2 event producer, X3 quote/mandate generation on the eIDAS signing service | Billing must work for customers onboarding against the Feb 2027 deadline |
+| **Wave 1** · 20 Oct – 30 Nov | **A1** (Apify-enrich + score fair exhibitor lists + cards); **E2**; **B2**; **C1** (prices on the website, D3 display rule); X4 renewal sequences | Phases 3–4. **S1** document-seal key + certificate setup, fingerprint published; counsel review of client SES + Integra seal | Convert fair leads while warm; publishing prices removes sales friction (the competitor analysis recommends it) |
+| **Wave 2** · Dec – mid-Jan | **C2**; **D1 → D2**; **A2**; X5 training enrolment (optional) | Phase 5 (AR + admin, with **S2** PDF render + PAdES seal on the platform keys in place of DocuSign); start Phase 6 against the C3 contract | Deal desk before first paid contracts; research once the catalogue is stable |
+| **Wave 3** · mid-Jan – Mar 2027 | **C3** CRM side (Stripe catalogue sync, agreements → Coupons/Quotes/Invoices); X2 sync consumer; **S3** CRM signature requests + quote signing; D3; E3; A3 | Phase 6 Stripe billing, Phase 8 email (reuse F0.6 SES), X2 event producer, X3 quote/mandate generation on the section S signing pipeline | Billing must work for customers onboarding against the Feb 2027 deadline |
 
 ### What can run in parallel
 - After Phase 0, **E** and **B** are independent; with a second developer, run them side by side.
@@ -1048,19 +1097,26 @@ Phase 0 (app real + logic-fn spike + SES + Anthropic) ─┬─▶ E1 ──▶ 
 | A (A1–A3) | L | E (E1–E3) | L (E1 M) |
 | B (B1–B3) | M | X1 Fair capture | S–M |
 | C (C1–C2) | L | X2 Portal↔CRM sync | M–L |
-| C incl. C3 + portal billing | XL | X3 CPQ + eIDAS signing | L |
-| S eIDAS signing (S1 PoC S; S2 replaces Phase 5 DocuSign work; S3 S) | S + M | X4 Renewals + milestones | M |
+| C incl. C3 + portal billing | XL | X3 CPQ + PAdES signing | L |
+| S free PAdES signing (S1 S; S2 M, replaces Phase 5 DocuSign work; S3 S) — €0/month | S + M | X4 Renewals + milestones | M |
 | | | X5 Training enrolment | M |
 
 ### Risks and decisions needed (owner: founder / business-dev-chief)
 1. **Twenty logic functions on v2.41** are unproven here. Phase 0 spike, with the sidecar-Lambda fallback (F0.3b).
 2. **LinkedIn data via Apify (decided, D1).** Residual risk: Apify's terms (§5.8) leave the legality of the data with Integra, and LinkedIn has sued third-party data APIs before. This is mitigated by company-page, no-cookie actors only, no person data, provenance on every record, a signed DPA, a kill switch and a spend cap (Feature A guardrails a–g). Alexandria is limited access with unpublished pricing, so it stays optional.
 3. **Public pricing display (decided, D3).** One open question remains: do DPP tiers count as "with optional extras" (→ "from €950")? The seed assumes no. Still to do: VAT wording, and confirming Alipay works for recurring billing.
-4. **eIDAS signing (decided, D2).** Still needed:
-   - Maltese counsel confirms the minimum signature level for AR mandates.
-   - The S1 PoC proves that Chinese signatories can pass remote identity verification. If they can't, client-side AdES + qualified timestamp is the fallback.
-5. **Portal spec amendments (approved, D5)** for C3, X2 and X3/eIDAS, plus their migrations. New dependencies (stripe, signing SDK), `sst.config.ts`/infra and workflow changes still need per-change Article 10 sign-off.
+4. **Free self-hosted signing (decided, D2 revised).** What it gives:
+   - **Integra's seal:** an advanced electronic seal in PAdES format (not qualified).
+   - **The client's assent:** a simple electronic signature (SES).
+   - **The EU validator** will report `INDETERMINATE / NO_CERTIFICATE_CHAIN_FOUND`, which is expected for a self-issued certificate. It will also show the signature intact.
+
+   Still needed:
+   - Maltese counsel confirms that client SES + Integra seal is enough for AR mandates (S1 gate).
+   - The founder decides the footer label for the `EIDAS-…` ID.
+   - Choose seal-key custody: SST Secret (free) or KMS (about $1/month).
+   - Separately: the existing DPP private key is stored as plaintext in Aurora (Phase 9 hardening).
+5. **Portal spec amendments (approved, D5)** for C3, X2 and X3 / section S signing, plus their migrations. New dependencies (stripe, PKI.js, @peculiar/x509, @signpdf / pdf-lib, @react-pdf/renderer), `sst.config.ts`/infra and workflow changes still need per-change Article 10 sign-off.
 6. **Managed Agents is beta:** pin the beta header; D's ingest code tolerates API changes; budget cap on every session.
-7. **GDPR:** update the privacy policy to list Cloudflare, SES, Anthropic, **Apify** and the **QTSP** as processors; Art. 14 notices for indirectly sourced leads; retention crons.
-8. **Docs drift:** fix the Clerk → Keycloak and DocuSign → eIDAS references in portal `CLAUDE.md`, `ARCHITECTURE.md`, spec and `sst-env.d.ts`. The DocuSign change is covered by D5; the Clerk wording still needs approval per the constitution.
+7. **GDPR:** update the privacy policy to list Cloudflare, SES, Anthropic and **Apify** as processors, and describe the signing evidence collected (IP, user-agent, one-time-code verification); Art. 14 notices for indirectly sourced leads; retention crons.
+8. **Docs drift:** fix the Clerk → Keycloak and DocuSign → self-hosted PAdES signing references in portal `CLAUDE.md`, `ARCHITECTURE.md`, spec and `sst-env.d.ts`. The DocuSign change is covered by D5; the Clerk wording still needs approval per the constitution.
 9. **Cloudflare project name (resolved, D6):** the live project is `integra-scientific`. Align `package.json`'s `deploy` script and `wrangler.jsonc` `name` with it in E1.
